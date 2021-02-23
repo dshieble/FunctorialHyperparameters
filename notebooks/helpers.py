@@ -1,8 +1,6 @@
 from gensim.models.word2vec import Word2Vec
 import gensim.downloader as api
 from tqdm import tqdm
-import annoy
-from annoy import AnnoyIndex
 import random
 import numpy as np
 import pandas as pd
