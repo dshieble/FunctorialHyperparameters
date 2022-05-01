@@ -1,46 +1,27 @@
 from mip import Model, xsum, minimize, BINARY
-from tqdm import tqdm
+import time
+from copy import deepcopy
+
 import annoy
-import random
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import time
-from collections import defaultdict
-from collections import Counter
 import cvxpy
-import numpy as np
 from scipy.optimize import linprog
-from copy import deepcopy
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import connected_components
-from hdbscan._hdbscan_tree import (condense_tree,
-                            compute_stability,
-                            get_clusters,
-                            outlier_scores,
-                                   do_labelling,
-                                   get_probabilities,
-                                   get_stability_scores)
-from hdbscan.hdbscan_ import _hdbscan_boruvka_kdtree, _hdbscan_prims_kdtree, _hdbscan_generic
-from hdbscan import HDBSCAN
 
-
-def remove_overlapping_in_order(A, out):
-    out = deepcopy(out)
-    while True:
-        overlap_counts = np.matmul(A, out)
-        is_overlapping = overlap_counts > A[0,0]
-        if sum(is_overlapping) == 0:
-            break
-        selected_indices = sorted(np.arange(len(overlap_counts)), key=lambda ix: -overlap_counts[ix])
-        selected_index = next(ix for ix in selected_indices if is_overlapping[ix])
-        assert out[selected_index] == 1
-        out[selected_index] = 0 # zero out the lowest stability overlapping index
-    return out
+CVXPY = "cvxpy"
+MIP = "mip"
 
 
 def get_mip_solution_from_cluster_point_matrix(cluster_point_matrix, stability_vector, solver):
-    
+    """
+    Args:
+        cluster_point_matrix: Matrix in which rows are clusters and columns are points
+        stability_vector: Vector of cluster stabilities.
+        solver: Either `CVXPY` or `MIP`            
+    Returns:
+        An array representing the clusters to select
+    """
     bool_cluster_point_matrix = np.array(cluster_point_matrix, dtype=np.bool)
     overlap_matrix = np.dot(bool_cluster_point_matrix, bool_cluster_point_matrix.T)
 
@@ -48,7 +29,6 @@ def get_mip_solution_from_cluster_point_matrix(cluster_point_matrix, stability_v
     selected_overlap = raw_overlap_x < raw_overlap_y
     overlap_x, overlap_y = raw_overlap_x[selected_overlap], raw_overlap_y[selected_overlap], 
 
-    
     A = np.zeros((cluster_point_matrix.shape[0], cluster_point_matrix.shape[0]))
     A = A + np.eye(cluster_point_matrix.shape[0]) * cluster_point_matrix.shape[0]
     A[overlap_x, overlap_y] = 1
@@ -72,7 +52,7 @@ def solve_zero_one_linear_program(c, A, b, solver):
     assert A.shape[1] == b.shape[0]
 
     out = None
-    if solver == "cvxpy":
+    if solver == CVXPY:
         start = time.time()
         print("Solving integer program of shape {}...".format(A.shape))
         # The variable we are solving for
@@ -89,7 +69,7 @@ def solve_zero_one_linear_program(c, A, b, solver):
         print("Integer program solved in {}!".format(time.time() - start))
 
         out = np.array(list(problem.solution.primal_vars.values())[0], dtype=bool)
-    elif solver == "mip":
+    elif solver == MIP:
         m = Model()
 
         x = [m.add_var(var_type=BINARY) for i in range(len(c))]
@@ -101,10 +81,6 @@ def solve_zero_one_linear_program(c, A, b, solver):
         m.optimize()
 
         out = np.array([x[i].x >= 0.99 for i in range(len(c))])
-    elif solver == "approximate":
-        print("using approximate solution")
-        solution = linprog(c=c, A_ub=A, b_ub=b)
-        out = remove_overlapping_in_order(A=A, out=np.round(solution.x) > 0)
     else:
         raise ValueError("Solver {} not recognized".format(solver))
     assert out is not None
